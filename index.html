@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Dashboard Rastreador FLT Suzano + Celular - V8.1</title>
+<link href="https://unpkg.com/leaflet/dist/leaflet.css" rel="stylesheet"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<style>
+    :root {
+        --cor-principal: #007bff;
+        --cor-fundo: #f4f4f9;
+        --cor-painel: #fff;
+        --sombra-leve: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    body { 
+        font-family: Arial, sans-serif; 
+        margin: 0; 
+        padding: 20px;
+        background-color: var(--cor-fundo); 
+    }
+    .container { 
+        display: flex; 
+        flex-wrap: wrap;
+        max-width: 1400px; 
+        margin: 20px auto; 
+        gap: 20px;
+    }
+    .map-container, .data-panel {
+        box-shadow: var(--sombra-leve);
+        border-radius: 8px;
+        background-color: var(--cor-painel);
+        padding: 20px;
+    }
+    .map-container { 
+        flex: 2; 
+        min-width: 350px;
+    }
+    #mapid { 
+        height: 600px; 
+        border-radius: 4px; 
+    }
+    .data-panel { 
+        flex: 1; 
+        min-width: 300px;
+        max-height: 680px; 
+    }
+    h1 { 
+        text-align: center; 
+        color: #333; 
+    }
+    h2, h3 { 
+        color: #333; 
+        border-bottom: 2px solid #ccc; 
+        padding-bottom: 5px; 
+        margin-top: 15px;
+    }
+    .data-item { 
+        padding: 8px 0; 
+        border-bottom: 1px dashed #eee; 
+        display: flex; 
+        justify-content: space-between; 
+        font-size: 1em; 
+    }
+    .data-item strong { 
+        color: var(--cor-principal); 
+        font-weight: bold;
+    }
+    .footer { 
+        text-align: center; 
+        margin-top: 20px; 
+        color: #777; 
+        font-size: 0.9em; 
+    }
+    /* Controles de Data/Hora */
+    .controls-row {
+        display: flex; 
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+    .controls-row input {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-size: 1em;
+        flex: 1;
+    }
+    button {
+        width: 100%; 
+        padding: 10px; 
+        background-color: var(--cor-principal); 
+        color: white; 
+        border: none; 
+        border-radius: 4px; 
+        cursor: pointer;
+        font-size: 1.1em;
+        transition: background-color 0.3s;
+    }
+    button:hover {
+        background-color: #0056b3;
+    }
+
+    /* Responsividade para telas muito pequenas */
+    @media (max-width: 768px) {
+        .container {
+            flex-direction: column;
+        }
+        .map-container, .data-panel {
+            min-width: 100%;
+            padding: 15px;
+        }
+    }
+</style>
+</head>
+<body>
+<h1>Dashboard Rastreador FLT Suzano </h1>
+<div class="container">
+<div class="map-container">
+<h2>Localização Atual</h2>
+<div id="mapid"></div>
+<div class="footer">Última atualização: <span id="last-update">...</span></div>
+</div>
+<div class="data-panel">
+<h2>Telemetria EPEVER</h2>
+<div class="data-item">Tensão Bateria (V): <strong id="field1">--</strong></div>
+<div class="data-item">Potência de Carga (W): <strong id="field2">--</strong></div>
+<div class="data-item">SOC (%): <strong id="field3">--</strong></div>
+<div class="data-item">Tensão PV (V): <strong id="field4">--</strong></div>
+<div class="data-item">Corrente PV (A): <strong id="field5">--</strong></div>
+<div class="data-item">Potência PV (W): <strong id="field6">--</strong></div>
+<div class="data-item">Energia Hoje (kWh): <strong id="field7">--</strong></div>
+<div class="data-item">Energia Consumida (Total kWh): <strong id="field8">--</strong></div>
+<h3 style="margin-top: 20px;">Busca Histórica</h3>
+<div class="data-item" style="display: block; padding-bottom: 10px; border-bottom: none;">
+<label>Início:</label>
+<div class="controls-row">
+<input id="start-date" type="date" value="2023-10-01"/>
+<input id="start-time" type="time" value="10:00"/>
+</div>
+</div>
+<div class="data-item" style="display: block; padding-bottom: 10px; border-bottom: none;">
+<label>Fim:</label>
+<div class="controls-row">
+<input id="end-date" type="date" value="2023-10-31"/>
+<input id="end-time" type="time" value="18:00"/>
+</div>
+</div>
+<button onclick="fetchHistoricalData()">Buscar Histórico</button>
+</div>
+</div>
+<script>
+    // ########################################################
+    // *** CHAVES DE LEITURA REAIS INSERIDAS ***
+    // ########################################################
+    const API_CONFIG = {
+        CHANNEL_ID_GPS: '3224486', 
+        READ_KEY_GPS: 'VIX39NPBZ6A7XL6Y',      
+        CHANNEL_ID_EPEVER: '3224487',
+        READ_KEY_EPEVER: 'UQON04BME3UEP3SD'   
+    };
+    const UPDATE_INTERVAL_MS = 30000; // 30 segundos
+
+    let mymap = null;
+    let currentMarker = null; // Marcador do Rastreador Ferroviário
+    let userLocationMarker = null; // Marcador do Celular
+    let historicalPath = null;
+    let updateTimer = null; 
+
+    // ------------------------------------------
+    // FUNÇÕES GERAIS DO MAPA
+    // ------------------------------------------
+
+    function initMap(lat = -22.86, lon = -47.19) {
+        if (mymap) return; 
+        mymap = L.map('mapid').setView([lat, lon], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+        }).addTo(mymap);
+    }
+
+    function clearMapFeatures() {
+        // Limpa o marcador do rastreador e o caminho histórico
+        if (currentMarker) {
+            mymap.removeLayer(currentMarker);
+            currentMarker = null;
+        }
+        if (historicalPath) {
+            mymap.removeLayer(historicalPath);
+            historicalPath = null;
+        }
+        // O marcador do celular (userLocationMarker) NÃO é limpo para permanecer no mapa
+    }
+
+    function updateMapMarker(lat, lon, timestamp) {
+        // Atualiza a posição do Rastreador Ferroviário
+        if (historicalPath) return; 
+
+        let latLon = L.latLng(lat, lon);
+        
+        const popupContent = `<b>Rastreador Ferroviário</b><br>${timestamp}<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`;
+        
+        if (currentMarker) {
+            currentMarker.setLatLng(latLon).bindPopup(popupContent);
+        } else {
+            currentMarker = L.marker(latLon).addTo(mymap)
+                .bindPopup(popupContent);
+        }
+        
+        // Centraliza no rastreador apenas se o celular não tiver sido localizado ainda
+        if (!userLocationMarker) {
+            mymap.setView(latLon, mymap.getZoom() < 13 ? 13 : mymap.getZoom());
+        }
+        document.getElementById('last-update').textContent = timestamp + ' (Ferroviário)';
+    }
+
+    // ------------------------------------------
+    // FUNÇÕES DE GEOLOCALIZAÇÃO DO CELULAR (NOVO CÓDIGO)
+    // ------------------------------------------
+
+    const userIcon = L.icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+        shadowSize: [41, 41]
+    });
+
+    function onLocationSuccess(position) {
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+        const accuracy = position.coords.accuracy;
+        const timestamp = new Date(position.timestamp).toLocaleString('pt-BR');
+        let latLon = L.latLng(lat, lon);
+
+        const popupContent = `<b>VOCÊ ESTÁ AQUI (Celular)</b><br>Atualizado: ${timestamp}<br>Precisão: ±${accuracy.toFixed(0)}m<br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`;
+
+        if (userLocationMarker) {
+            userLocationMarker.setLatLng(latLon).bindPopup(popupContent);
+        } else {
+            userLocationMarker = L.marker(latLon, {icon: userIcon}).addTo(mymap)
+                .bindPopup(popupContent).openPopup();
+            
+            // Centraliza e dá zoom na sua localização na primeira vez
+            mymap.setView(latLon, 15);
+        }
+        
+        // Opcional: Você pode atualizar o rodapé com a localização do celular aqui se preferir.
+        // document.getElementById('last-update').textContent = timestamp + ' (Celular)';
+    }
+
+    function onLocationError(error) {
+        console.error("Erro ao obter localização do celular:", error);
+        // Exibe um alerta apenas se o erro for por falta de permissão ou não encontrar localização
+        if (error.code === error.PERMISSION_DENIED || error.code === error.POSITION_UNAVAILABLE) {
+            alert(`Erro ao obter localização do celular: ${error.message}. Por favor, verifique se a localização (GPS) está ativada e se a permissão foi concedida ao navegador.`);
+        }
+    }
+
+    function startUserTracking() {
+        if ("geolocation" in navigator) {
+            // Monitora a posição (rastreio em tempo real)
+            navigator.geolocation.watchPosition(
+                onLocationSuccess,
+                onLocationError,
+                {
+                    enableHighAccuracy: true, // Usa GPS
+                    timeout: 10000,          
+                    maximumAge: 0            // Não usa cache
+                }
+            );
+        } else {
+            alert("Seu navegador não suporta geolocalização.");
+        }
+    }
+
+    // ------------------------------------------
+    // BUSCA EPEVER (Tempo Real)
+    // ------------------------------------------
+    async function fetchEpeverData() {
+        const url = `https://api.thingspeak.com/channels/${API_CONFIG.CHANNEL_ID_EPEVER}/feeds/last.json?api_key=${API_CONFIG.READ_KEY_EPEVER}`;
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data && data.field1) {
+                document.getElementById('field1').textContent = parseFloat(data.field1).toFixed(2) + ' V';
+                document.getElementById('field2').textContent = parseFloat(data.field2).toFixed(2) + ' W';
+                document.getElementById('field3').textContent = parseInt(data.field3) + ' %';
+                document.getElementById('field4').textContent = parseFloat(data.field4).toFixed(2) + ' V';
+                document.getElementById('field5').textContent = parseFloat(data.field5).toFixed(2) + ' A';
+                document.getElementById('field6').textContent = parseFloat(data.field6).toFixed(2) + ' W';
+                document.getElementById('field7').textContent = parseFloat(data.field7).toFixed(2) + ' kWh';
+                document.getElementById('field8').textContent = parseFloat(data.field8).toFixed(2) + ' kWh';
+            }
+        } catch (error) {
+            console.error("Erro ao buscar dados do EPEVER:", error);
+        }
+    }
+
+    // ------------------------------------------
+    // BUSCA GPS (Tempo Real)
+    // ------------------------------------------
+    async function fetchGpsData() {
+        if (historicalPath) return; 
+
+        const url = `https://api.thingspeak.com/channels/${API_CONFIG.CHANNEL_ID_GPS}/feeds/last.json?api_key=${API_CONFIG.READ_KEY_GPS}`;
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data && data.field1 && data.field2) {
+                const lat = parseFloat(data.field1);
+                const lon = parseFloat(data.field2);
+                const timestamp = new Date(data.created_at).toLocaleString('pt-BR');
+
+                initMap(lat, lon); 
+                updateMapMarker(lat, lon, timestamp); 
+            }
+        } catch (error) {
+            console.error("Erro ao buscar dados do GPS em tempo real:", error);
+        }
+    }
+
+    // ------------------------------------------
+    // BUSCA HISTÓRICA
+    // ------------------------------------------
+    async function fetchHistoricalData() {
+        const startDate = document.getElementById('start-date').value;
+        const startTime = document.getElementById('start-time').value;
+        const endDate = document.getElementById('end-date').value;
+        const endTime = document.getElementById('end-time').value;
+
+        if (!startDate || !startTime || !endDate || !endTime) {
+            alert("Por favor, selecione as datas e horários de Início e Fim.");
+            return;
+        }
+
+        const apiStart = encodeURIComponent(`${startDate}T${startTime}:00`).replace('T', '%20');
+        const apiEnd = encodeURIComponent(`${endDate}T${endTime}:00`).replace('T', '%20');
+
+        const url = `https://api.thingspeak.com/channels/${API_CONFIG.CHANNEL_ID_GPS}/feeds.json?api_key=${API_CONFIG.READ_KEY_GPS}&start=${apiStart}&end=${apiEnd}&results=8000`;
+        
+        document.getElementById('last-update').textContent = 'Buscando dados históricos...';
+
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            const coordinates = data.feeds
+                .filter(feed => feed.field1 && feed.field2)
+                .map(feed => [parseFloat(feed.field1), parseFloat(feed.field2)]);
+
+            drawHistoricalPath(coordinates);
+            
+        } catch (error) {
+            console.error("Erro ao buscar dados históricos:", error);
+            alert("Erro ao buscar dados históricos. Verifique o console para mais detalhes.");
+        }
+    }
+    
+    function drawHistoricalPath(coordinates) {
+        clearMapFeatures(); 
+        
+        if (coordinates.length === 0) {
+            alert("Nenhum dado encontrado para o período selecionado.");
+            return;
+        }
+
+        historicalPath = L.polyline(coordinates, {color: 'red', weight: 4}).addTo(mymap);
+        mymap.fitBounds(historicalPath.getBounds());
+
+        L.circleMarker(coordinates[0], {radius: 8, color: 'green', fillColor: 'green', fillOpacity: 1}).addTo(mymap)
+        .bindPopup("<b>Início do Rastro</b>").openPopup();
+        
+        L.circleMarker(coordinates[coordinates.length - 1], {radius: 8, color: 'red', fillColor: 'red', fillOpacity: 1}).addTo(mymap)
+        .bindPopup("<b>Fim do Rastro</b>").openPopup();
+
+        document.getElementById('last-update').textContent = `Dados Históricos (${coordinates.length} pontos)`;
+    }
+
+
+    // ------------------------------------------
+    // INICIALIZAÇÃO DA APLICAÇÃO
+    // ------------------------------------------
+    function initializeApp() {
+        // Garante que o mapa é inicializado
+        initMap(); 
+        
+        // ** INICIA O RASTREAMENTO DO SEU CELULAR **
+        startUserTracking(); 
+        
+        // Inicia a primeira busca imediata do rastreador e telemetria
+        fetchGpsData();
+        fetchEpeverData();
+
+        // Configura o loop de atualização do rastreador e telemetria
+        if (updateTimer) clearInterval(updateTimer);
+        updateTimer = setInterval(() => {
+            fetchGpsData();
+            fetchEpeverData();
+        }, UPDATE_INTERVAL_MS); 
+    }
+
+    document.addEventListener('DOMContentLoaded', initializeApp);
+
+</script>
+</body>
+</html>
