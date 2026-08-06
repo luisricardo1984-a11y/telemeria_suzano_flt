@@ -13,9 +13,7 @@
  *   O plano gratuito do ThingSpeak aceita no maximo 1 update a cada 15s por
  *   canal. Por isso a leitura/parse do GPS roda a 1Hz (uteis para log local,
  *   calculo de velocidade/rumo, filtragem de fix), mas o envio HTTP para o
- *   ThingSpeak respeita THINGSPEAK_MIN_INTERVAL_MS. Para historico real a
- *   1Hz, grave os pontos no cartao TF (ja presente nesta placa) e faca
- *   upload em lote depois, ou troque o backend por um que aceite 1Hz.
+ *   ThingSpeak respeita THINGSPEAK_MIN_INTERVAL_MS.
  *
  * Bibliotecas (Arduino Library Manager):
  *   - TinyGSM       (vshymanskyy)
@@ -25,12 +23,12 @@
  * exemplo Xinyuan-LilyGO/T-Internet-COM -> example/Arduino/ATdebug):
  *   Modem (A7600SA / SIM7600SA, via adaptador Mini PCIE):
  *       PWRKEY = GPIO32   TX (ESP32->modem) = GPIO33   RX (modem->ESP32) = GPIO35
- *   GPS NEO-6M (UART2, pinos livres nesta placa):
- *       ESP32 GPIO16 <- TX do NEO-6M
- *       ESP32 GPIO17 -> RX do NEO-6M (opcional, NEO-6M raramente precisa)
+ *   GPS NEO-6M (UART2, usando o header do cartao TF, unico com pinos
+ *   soldaveis livres nesta placa - abre mao do slot de cartao SD):
+ *       ESP32 GPIO2  <- TX do NEO-6M   (era TF-MISO)
+ *       ESP32 GPIO15 -> RX do NEO-6M, opcional (era TF-MOSI)
  *       NEO-6M: VCC->3V3, GND->GND
- *   (GPIO16/17 nao sao usados por Ethernet (LAN8720/RMII), TF card, modem ou
- *   LED RGB nesta placa - conferido no pinout oficial "T-Internet-COM PINMAP")
+ *   Nao use o cartao TF/SD ao mesmo tempo que o GPS - eles compartilham pino.
  */
 
 #define TINY_GSM_MODEM_SIM7600
@@ -42,9 +40,9 @@
 #define MODEM_TX      33
 #define MODEM_RX      35
 
-// ---------- GPS NEO-6M ----------
-#define GPS_RX_PIN    16   // <- TX do NEO-6M
-#define GPS_TX_PIN    17   // -> RX do NEO-6M (opcional)
+// ---------- GPS NEO-6M (usa o header do TF/SD, sem cartao SD instalado) ----------
+#define GPS_RX_PIN    2    // <- TX do NEO-6M
+#define GPS_TX_PIN    15   // -> RX do NEO-6M (opcional)
 #define GPS_BAUD      9600
 
 // ---------- Rede celular ----------
