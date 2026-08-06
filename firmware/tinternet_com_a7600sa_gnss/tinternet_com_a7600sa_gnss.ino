@@ -27,6 +27,19 @@
  *   calculo de velocidade, etc.), mas o envio HTTP respeita
  *   THINGSPEAK_MIN_INTERVAL_MS.
  *
+ * TRADE-OFF conhecido (GNSS e dados no mesmo UART):
+ *   Como o A7600SA so expoe uma UART pro ESP32, os comandos AT do GNSS e o
+ *   trafego de dados do upload disputam o mesmo canal serial, sequencialmente
+ *   (nunca ao mesmo tempo - o loop() e single-threaded). Isso nao trava o
+ *   firmware, mas durante a janela de upload (a cada 15s, ~UPLOAD_WAIT_MS)
+ *   o polling do GNSS fica represado, perdendo 1 ou 2 amostras naquele
+ *   ciclo. Na pratica isso ainda deixa >90% das leituras saindo a 1Hz, o
+ *   que costuma ser suficiente para rastreamento veicular/ferroviario. Se
+ *   precisar de 1Hz sem NENHUMA lacuna, a alternativa e um GPS externo em
+ *   UART propria - mas nesta placa isso exige abrir mao do slot de SD (os
+ *   unicos pinos soldaveis livres, IO2/IO15, sao os do header do TF) ou
+ *   solda de precisao direto nos pads GPIO16/17 do modulo ESP32-WROVER-E.
+ *
  * Biblioteca (Arduino Library Manager):
  *   - TinyGSM (vshymanskyy) - inclui suporte a GNSS do SIM7600 (enableGPS/getGPS)
  *
@@ -54,6 +67,7 @@ const char* server        = "api.thingspeak.com";
 const String writeKeyGps  = "SUA_WRITE_API_KEY_DO_CANAL_GPS";
 const unsigned long THINGSPEAK_MIN_INTERVAL_MS = 15000; // limite do plano free
 const unsigned long GNSS_POLL_INTERVAL_MS      = 1000;  // leitura local a 1Hz
+const unsigned long UPLOAD_WAIT_MS             = 800;   // drena resposta sem travar a UART
 
 HardwareSerial SerialAT(1);
 TinyGsm modem(SerialAT);
@@ -128,8 +142,13 @@ void uploadToThingSpeak() {
                   "Host: " + server + "\r\n" +
                   "Connection: close\r\n\r\n");
 
+  // Nao esperamos a resposta completa do ThingSpeak: o envio ja foi feito
+  // assim que os bytes saem da UART, e ficar bloqueado aqui e o que mais
+  // rouba tempo da UART do canal de AT commands, atrasando o polling do
+  // GNSS que roda no mesmo link serial. UPLOAD_WAIT_MS curto so drena o
+  // pouco que ja chegou, sem travar o loop esperando o servidor responder.
   unsigned long t0 = millis();
-  while (gsmClient.connected() && millis() - t0 < 5000) {
+  while (gsmClient.connected() && millis() - t0 < UPLOAD_WAIT_MS) {
     while (gsmClient.available()) gsmClient.read();
   }
   gsmClient.stop();
